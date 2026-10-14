@@ -1,7 +1,7 @@
 {
   "id": "xvideos",
   "name": "XVideos",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "apiVersion": 6,
   "entry": "plugin.js",
   "description": "Videos adultos de xvideos.com. Solo para mayores de 18 años. Búsqueda, Home y descargas.",
@@ -10,10 +10,15 @@
   "icon": "icon.png",
   "hosts": [
     "www.xvideos.com",
+    "thumb-cdn77.xvideos-cdn.com",
+    "thumbs-gcore.xvideos-cdn.com",
+    "hls-cdn77.xvideos-cdn.com",
+    "cdn77-vid.xvideos-cdn.com",
     "xvideos.com",
     "*.xvideos.com",
-    "cdn77-vid.xvideos-cdn.com",
-    "*.xvideos-cdn.com"
+    "*.xvideos-cdn.com",
+    "mp4-cdn77.xvideos-cdn.com",
+    "assets-cdn77.xvideos-cdn.com"
   ],
   "streamHosts": "any",
   "capabilities": [
@@ -24,7 +29,9 @@
     "download"
   ],
   "color": "#C8102E",
-  "categories": ["adult"],
+  "categories": [
+    "adult"
+  ],
   "settings": [
     {
       "key": "quality",
@@ -32,9 +39,18 @@
       "type": "select",
       "default": "high",
       "options": [
-        { "value": "high", "label": "Alta (HD / HLS)" },
-        { "value": "low", "label": "Baja (ahorro de datos)" },
-        { "value": "hls", "label": "Solo HLS" }
+        {
+          "value": "high",
+          "label": "Alta (HD / HLS)"
+        },
+        {
+          "value": "low",
+          "label": "Baja (ahorro de datos)"
+        },
+        {
+          "value": "hls",
+          "label": "Solo HLS"
+        }
       ]
     },
     {
@@ -43,11 +59,26 @@
       "type": "select",
       "default": "relevance",
       "options": [
-        { "value": "relevance", "label": "Relevancia" },
-        { "value": "uploaddate", "label": "Más recientes" },
-        { "value": "rating", "label": "Mejor valorados" },
-        { "value": "views", "label": "Más vistos" },
-        { "value": "length", "label": "Más largos" }
+        {
+          "value": "relevance",
+          "label": "Relevancia"
+        },
+        {
+          "value": "uploaddate",
+          "label": "Más recientes"
+        },
+        {
+          "value": "rating",
+          "label": "Mejor valorados"
+        },
+        {
+          "value": "views",
+          "label": "Más vistos"
+        },
+        {
+          "value": "length",
+          "label": "Más largos"
+        }
       ]
     },
     {
@@ -56,12 +87,30 @@
       "type": "select",
       "default": "allduration",
       "options": [
-        { "value": "allduration", "label": "Cualquiera" },
-        { "value": "1-3min", "label": "1–3 min" },
-        { "value": "3-10min", "label": "3–10 min" },
-        { "value": "10min_more", "label": "Más de 10 min" },
-        { "value": "10-20min", "label": "10–20 min" },
-        { "value": "20min_more", "label": "Más de 20 min" }
+        {
+          "value": "allduration",
+          "label": "Cualquiera"
+        },
+        {
+          "value": "1-3min",
+          "label": "1–3 min"
+        },
+        {
+          "value": "3-10min",
+          "label": "3–10 min"
+        },
+        {
+          "value": "10min_more",
+          "label": "Más de 10 min"
+        },
+        {
+          "value": "10-20min",
+          "label": "10–20 min"
+        },
+        {
+          "value": "20min_more",
+          "label": "Más de 20 min"
+        }
       ]
     },
     {

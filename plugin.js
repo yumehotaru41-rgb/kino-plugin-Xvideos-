@@ -1,6 +1,6 @@
 // Kino plugin: XVideos (xvideos.com) — adult video search and playback.
 // apiVersion 6: adult flag, streamHosts any, settings, download.
-// Declared hosts: www.xvideos.com and CDN nodes used for video delivery.
+// Parser updated for current xvideos HTML (id="video_<eid>", data-src thumbs, title attr).
 
 const BASE = "https://www.xvideos.com";
 
@@ -19,6 +19,15 @@ function cleanText(s) {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#039;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&comma;/g, ",")
+    .replace(/&#(\d+);/g, (_, n) => {
+      try {
+        return String.fromCharCode(Number(n));
+      } catch {
+        return "";
+      }
+    })
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -54,93 +63,128 @@ function toItem(v) {
     title: v.title,
     kind: "movie",
     poster: v.thumb,
-    quality: v.hd ? "HD" : undefined,
+    quality: v.hd ? (v.hdLabel || "HD") : undefined,
     runtimeMinutes: v.durationMin,
-    overview: v.duration ? v.duration : undefined,
+    overview: v.duration || undefined,
     adult: true,
   };
 }
 
-// Extract video cards from a search / listing page HTML.
+/**
+ * Parse video cards from current xvideos listing HTML.
+ * Structure (2026):
+ *   <div id="video_<eid>" data-id="..." data-eid="..." class="... thumb-block ...">
+ *     <div class="thumb-inside">...<img data-src="THUMB" ...>
+ *       <span class="video-hd-mark">1080p</span>
+ *     <div class="thumb-under">
+ *       <p class="title"><a href="/video.<eid>/slug" title="TITLE">TITLE <span class="duration">N min</span></a></p>
+ */
 function parseVideoCards(html) {
   const items = [];
   const seen = new Set();
 
-  // Primary: thumb-block with id="video_XXXX"
-  const blockRe =
-    /<div[^>]*class="[^"]*thumb-block[^"]*"[^>]*id="video_([^"]+)"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/gi;
-  let m;
-  while ((m = blockRe.exec(html)) !== null) {
-    const id = m[1].replace(/[^a-zA-Z0-9._-]/g, "");
-    if (!id || seen.has(id)) continue;
-    const block = m[0];
+  // Split by video block starts (more resilient than matching balanced divs)
+  const starts = [];
+  const startRe = /<div[^>]*\bid="video_([a-zA-Z0-9._-]+)"[^>]*>/gi;
+  let sm;
+  while ((sm = startRe.exec(html)) !== null) {
+    starts.push({ id: sm[1], index: sm.index });
+  }
 
-    const titleM =
-      /<p[^>]*class="title"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*title="([^"]*)"/i.exec(block) ||
-      /<a[^>]*href="(\/video[^"]+)"[^>]*title="([^"]*)"/i.exec(block);
-    if (!titleM) continue;
+  for (let i = 0; i < starts.length; i++) {
+    const id = starts[i].id;
+    if (seen.has(id)) continue;
+    const from = starts[i].index;
+    const to = i + 1 < starts.length ? starts[i + 1].index : from + 4000;
+    const block = html.slice(from, Math.min(to, from + 4500));
 
-    const thumbM =
-      /data-src="([^"]+)"/i.exec(block) ||
-      /src="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i.exec(block);
-    const durM = /<span[^>]*class="duration"[^>]*>([^<]+)</i.exec(block);
-    const hd = /video-hd-mark|class="[^"]*\bhd\b/i.test(block) || /\bHD\b/.test(block);
+    // Title: prefer title="..." on the title link
+    let title = "";
+    const titleAttr =
+      /<p[^>]*class="[^"]*title[^"]*"[^>]*>[\s\S]*?<a[^>]*title="([^"]+)"/i.exec(block) ||
+      /<a[^>]*href="\/video\.[^"]*"[^>]*title="([^"]+)"/i.exec(block);
+    if (titleAttr) {
+      title = cleanText(titleAttr[1]);
+    }
+    // Fallback: text content of the title <a>, strip duration span
+    if (!title || title.length < 2) {
+      const titleText =
+        /<p[^>]*class="[^"]*title[^"]*"[^>]*>[\s\S]*?<a[^>]*href="\/video\.[^"]*"[^>]*>([\s\S]*?)<\/a>/i.exec(
+          block
+        );
+      if (titleText) {
+        title = cleanText(titleText[1].replace(/<span[^>]*>[\s\S]*?<\/span>/gi, ""));
+      }
+    }
+    // Last resort: slug from href
+    if (!title || title.length < 2) {
+      const hrefM = /href="\/video\.[a-zA-Z0-9._-]+\/(?:\d+\/\d+\/)?([^"?]+)/i.exec(block);
+      if (hrefM) {
+        title = cleanText(decodeURIComponent(hrefM[1]).replace(/_/g, " "));
+      }
+    }
+    if (!title || title.length < 2) continue;
+    // Avoid using path-looking titles
+    if (title.startsWith("/video.") || title.startsWith("video.")) {
+      const hrefM = /href="\/video\.[a-zA-Z0-9._-]+\/(?:\d+\/\d+\/)?([^"?]+)/i.exec(block);
+      if (hrefM) title = cleanText(decodeURIComponent(hrefM[1]).replace(/_/g, " "));
+      else continue;
+    }
 
-    const title = cleanText(titleM[2] || titleM[1]);
-    if (!title) continue;
+    // Thumbnail: data-src preferred (lazy), then data-sfwthumb, then src if not blank.gif
+    let thumb;
+    const dataSrc = /data-src="(https?:\/\/[^"]+)"/i.exec(block);
+    const sfw = /data-sfwthumb="(https?:\/\/[^"]+)"/i.exec(block);
+    const src = /<img[^>]+src="(https?:\/\/[^"]+)"/i.exec(block);
+    if (dataSrc) thumb = dataSrc[1];
+    else if (sfw) thumb = sfw[1];
+    else if (src && !/blank\.gif|lightbox/i.test(src[1])) thumb = src[1];
+
+    // Duration
+    const durM =
+      /<span[^>]*class="duration"[^>]*>([^<]+)</i.exec(block) ||
+      /class="duration"[^>]*>([^<]+)/i.exec(block);
+    const duration = durM ? cleanText(durM[1]) : undefined;
+    const durationMin = parseDuration(duration);
+
+    // HD mark (1080p, 720p, HD, etc.)
+    const hdMark = /<span[^>]*class="[^"]*video-hd-mark[^"]*"[^>]*>([^<]*)</i.exec(block);
+    const hd = !!hdMark || /video-hd-mark/i.test(block);
+    const hdLabel = hdMark ? cleanText(hdMark[1]) || "HD" : hd ? "HD" : undefined;
 
     seen.add(id);
     items.push({
       id,
       title: title.slice(0, 200),
-      thumb: thumbM ? thumbM[1] : undefined,
-      duration: durM ? cleanText(durM[1]) : undefined,
-      durationMin: parseDuration(durM ? durM[1] : ""),
+      thumb,
+      duration,
+      durationMin,
       hd,
-      href: titleM[1],
+      hdLabel,
     });
   }
 
-  // Fallback: modern /video.ID/ links
-  if (items.length < 5) {
-    const linkRe = /href="(\/video\.([a-zA-Z0-9]+)\/[^"]*)"[^>]*(?:title="([^"]*)")?/gi;
+  // Fallback if the id="video_" pattern disappeared entirely
+  if (items.length === 0) {
+    const linkRe =
+      /<a[^>]*href="\/video\.([a-zA-Z0-9._-]+)\/[^"]*"[^>]*title="([^"]+)"[^>]*>/gi;
     let lm;
     while ((lm = linkRe.exec(html)) !== null) {
-      const id = lm[2];
+      const id = lm[1];
       if (seen.has(id)) continue;
-      const title = cleanText(lm[3] || lm[1]);
-      if (!title || title.length < 3) continue;
+      const title = cleanText(lm[2]);
+      if (!title || title.length < 2) continue;
       seen.add(id);
+      const around = html.slice(Math.max(0, lm.index - 800), lm.index + 200);
+      const ds = /data-src="(https?:\/\/[^"]+)"/i.exec(around);
       items.push({
         id,
         title: title.slice(0, 200),
-        thumb: undefined,
+        thumb: ds ? ds[1] : undefined,
         duration: undefined,
         durationMin: undefined,
-        hd: false,
-        href: lm[1],
-      });
-    }
-  }
-
-  // Second fallback: classic /videoNNNN/
-  if (items.length < 5) {
-    const classicRe = /href="(\/video(\d+)\/[^"]*)"[^>]*(?:title="([^"]*)")?/gi;
-    let cm;
-    while ((cm = classicRe.exec(html)) !== null) {
-      const id = cm[2];
-      if (seen.has(id)) continue;
-      const title = cleanText(cm[3] || cm[1]);
-      if (!title || title.length < 3) continue;
-      seen.add(id);
-      items.push({
-        id,
-        title: title.slice(0, 200),
-        thumb: undefined,
-        duration: undefined,
-        durationMin: undefined,
-        hd: false,
-        href: cm[1],
+        hd: /video-hd-mark/i.test(around),
+        hdLabel: undefined,
       });
     }
   }
@@ -201,12 +245,10 @@ export async function search(query) {
 
   let cards = parseVideoCards(html);
 
-  // Client-side HD filter as extra safety
   if (params.onlyHd) {
     cards = cards.filter((c) => c.hd);
   }
 
-  // Prefer exact-ish title matches first (simple ranking)
   const qLower = q.toLowerCase();
   const qWords = qLower.split(/\s+/).filter(Boolean);
   cards.sort((a, b) => {
@@ -320,7 +362,6 @@ export async function resolve(ref) {
 
   if (!html) throw kino.error("not_found", "vídeo no encontrado");
 
-  // Extract stream URLs from player setup scripts
   const high =
     /setVideoUrlHigh\(['"]([^'"]+)['"]\)/.exec(html) ||
     /html5player\.setVideoUrlHigh\(['"]([^'"]+)['"]\)/.exec(html);
@@ -335,6 +376,9 @@ export async function resolve(ref) {
     /property="og:video(?::url)?"\s+content="([^"]+)"/i.exec(html) ||
     /content="([^"]+)"\s+property="og:video(?::url)?"/i.exec(html);
 
+  const mp4Hd =
+    /"(https?:\/\/[^"]*mp4[^"]*(?:hd|hq|1080|720)[^"]*)"/i.exec(html) ||
+    /'(https?:\/\/[^']*mp4[^']*(?:hd|hq|1080|720)[^']*)'/i.exec(html);
   const mp4 =
     /"(https?:\/\/[^"]+\.mp4[^"]*)"/.exec(html) ||
     /'(https?:\/\/[^']+\.mp4[^']*)'/.exec(html);
@@ -344,7 +388,7 @@ export async function resolve(ref) {
 
   const streams = {
     hls: (hls && hls[1]) || (m3u8 && m3u8[1]) || null,
-    high: (high && high[1]) || null,
+    high: (high && high[1]) || (mp4Hd && mp4Hd[1]) || null,
     low: (low && low[1]) || null,
     og: (og && og[1]) || null,
     mp4: (mp4 && mp4[1]) || null,
@@ -361,7 +405,6 @@ export async function resolve(ref) {
     streamUrl = streams.low || streams.high || streams.hls || streams.og || streams.mp4;
     label = streams.low ? "Baja" : "Respaldo";
   } else {
-    // high (default)
     streamUrl = streams.hls || streams.high || streams.og || streams.mp4 || streams.low;
     label = streams.hls ? "HLS" : streams.high ? "Alta" : "Directo";
   }
