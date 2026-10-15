@@ -1,4 +1,4 @@
-// Kino plugin: XVideos — v1.4.0
+// Kino plugin: XVideos — v1.4.1
 // No download. Optional account for favorites/playlists.
 // Home order: Recientes, Asian, Big Tits, Big Ass, Latina, MILF, (+ favoritos si hay sesión).
 
@@ -44,7 +44,7 @@ function parseDuration(text) {
 }
 
 function preferredQuality() {
-  const q = String(kino.config.get("quality") || "high").toLowerCase();
+  const q = String(kino.config.get("quality") || "hls").toLowerCase();
   if (q === "low" || q === "hls") return q;
   return "high";
 }
@@ -525,6 +525,7 @@ export async function home() {
     { id: "big-ass", title: "Big Ass", path: "/c/Big_Ass-24" },
     { id: "latina", title: "Latina", path: "/c/Latina-16" },
     { id: "milf", title: "MILF", path: "/c/Milf-19" },
+    { id: "cosplay", title: "Cosplay", path: "/tags/cosplay" },
   ];
 
   // Favorites / playlists first if logged in
