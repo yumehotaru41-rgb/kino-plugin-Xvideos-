@@ -1,6 +1,6 @@
-// Kino plugin: XVideos — v1.3.0
-// Fix: resolve needs /video.<id>/<slug> (bare /video.<id>/ returns 404).
-// More resilient stream extraction + popular tag rows on Home.
+// Kino plugin: XVideos — v1.4.0
+// No download. Optional account for favorites/playlists.
+// Home order: Recientes, Asian, Big Tits, Big Ass, Latina, MILF, (+ favoritos si hay sesión).
 
 const BASE = "https://www.xvideos.com";
 
@@ -57,25 +57,20 @@ function searchParams() {
   };
 }
 
-/** Normalize any stored ref to a plain video eid (alphanumeric). */
 function extractId(ref) {
   const s = String(ref || "").trim();
   if (!s) return "";
-  // Full path: /video.eid/slug or video.eid/slug
   let m = /(?:^|\/)video\.([a-zA-Z0-9._-]+)/.exec(s);
   if (m) return m[1];
-  // Classic numeric: /video12345/ or video12345
   m = /(?:^|\/)video(\d{5,})(?:\/|$)/.exec(s);
   if (m) return m[1];
-  // id|slug or eid only
-  const head = s.split(/[|/]/)[0];
-  return head.replace(/[^a-zA-Z0-9._-]/g, "");
+  return s.split(/[|/]/)[0].replace(/[^a-zA-Z0-9._-]/g, "");
 }
 
 function toItem(v) {
   return {
     id: v.id,
-    ref: v.id, // resolve only needs the eid; URL is built as /video.<eid>/x
+    ref: v.id,
     title: v.title,
     kind: "movie",
     poster: v.thumb,
@@ -89,7 +84,6 @@ function toItem(v) {
 function parseVideoCards(html) {
   const items = [];
   const seen = new Set();
-
   const starts = [];
   const startRe = /<div[^>]*\bid="video_([a-zA-Z0-9._-]+)"[^>]*>/gi;
   let sm;
@@ -109,7 +103,6 @@ function parseVideoCards(html) {
       /<p[^>]*class="[^"]*title[^"]*"[^>]*>[\s\S]*?<a[^>]*title="([^"]+)"/i.exec(block) ||
       /<a[^>]*href="\/video\.[^"]*"[^>]*title="([^"]+)"/i.exec(block);
     if (titleAttr) title = cleanText(titleAttr[1]);
-
     if (!title || title.length < 2) {
       const titleText =
         /<p[^>]*class="[^"]*title[^"]*"[^>]*>[\s\S]*?<a[^>]*href="\/video\.[^"]*"[^>]*>([\s\S]*?)<\/a>/i.exec(
@@ -119,12 +112,10 @@ function parseVideoCards(html) {
         title = cleanText(titleText[1].replace(/<span[^>]*>[\s\S]*?<\/span>/gi, ""));
       }
     }
-
     if (!title || title.length < 2) {
       const hrefM = /href="\/video\.[a-zA-Z0-9._-]+\/(?:\d+\/\d+\/)?([^"?#]+)/i.exec(block);
       if (hrefM) title = cleanText(decodeURIComponent(hrefM[1]).replace(/_/g, " "));
     }
-
     if (!title || title.length < 2) continue;
     if (title.startsWith("/video.") || title.startsWith("video.")) {
       const hrefM = /href="\/video\.[a-zA-Z0-9._-]+\/(?:\d+\/\d+\/)?([^"?#]+)/i.exec(block);
@@ -144,7 +135,6 @@ function parseVideoCards(html) {
       /<span[^>]*class="duration"[^>]*>([^<]+)</i.exec(block) ||
       /class="duration"[^>]*>([^<]+)/i.exec(block);
     const duration = durM ? cleanText(durM[1]) : undefined;
-
     const hdMark = /<span[^>]*class="[^"]*video-hd-mark[^"]*"[^>]*>([^<]*)</i.exec(block);
     const hd = !!hdMark || /video-hd-mark/i.test(block);
     const hdLabel = hdMark ? cleanText(hdMark[1]) || "HD" : hd ? "HD" : undefined;
@@ -188,7 +178,7 @@ function parseVideoCards(html) {
   return items;
 }
 
-async function fetchPage(path) {
+async function fetchPage(path, opts) {
   const url = path.startsWith("http") ? path : BASE + path;
   const r = await kino.fetch(url, {
     headers: {
@@ -197,11 +187,14 @@ async function fetchPage(path) {
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
       Referer: BASE + "/",
+      ...(opts && opts.headers),
     },
+    method: (opts && opts.method) || "GET",
+    body: opts && opts.body,
+    cookies: true,
     timeoutMs: 15000,
   });
-  if (!r.ok) throw new Error("xvideos respondió " + r.status);
-  return r.text();
+  return r;
 }
 
 function buildSearchPath(q, page, params) {
@@ -225,32 +218,258 @@ function extractStreams(html) {
     }
     return null;
   };
+  return {
+    hls: pick(
+      /setVideoHLS\(['"]([^'"]+)['"]\)/,
+      /html5player\.setVideoHLS\(['"]([^'"]+)['"]\)/,
+      /"(https?:\/\/[^"]+\.m3u8[^"]*)"/,
+      /'(https?:\/\/[^']+\.m3u8[^']*)'/
+    ),
+    high: pick(
+      /setVideoUrlHigh\(['"]([^'"]+)['"]\)/,
+      /html5player\.setVideoUrlHigh\(['"]([^'"]+)['"]\)/
+    ),
+    low: pick(
+      /setVideoUrlLow\(['"]([^'"]+)['"]\)/,
+      /html5player\.setVideoUrlLow\(['"]([^'"]+)['"]\)/
+    ),
+    mp4: pick(/"(https?:\/\/[^"]+\.mp4[^"]*)"/, /'(https?:\/\/[^']+\.mp4[^']*)'/),
+    og: pick(
+      /property="og:video(?::url)?"\s+content="([^"]+)"/i,
+      /content="([^"]+)"\s+property="og:video(?::url)?"/i
+    ),
+  };
+}
 
-  const hls = pick(
-    /setVideoHLS\(['"]([^'"]+)['"]\)/,
-    /html5player\.setVideoHLS\(['"]([^'"]+)['"]\)/,
-    /"(https?:\/\/[^"]+\.m3u8[^"]*)"/,
-    /'(https?:\/\/[^']+\.m3u8[^']*)'/
-  );
-  const high = pick(
-    /setVideoUrlHigh\(['"]([^'"]+)['"]\)/,
-    /html5player\.setVideoUrlHigh\(['"]([^'"]+)['"]\)/,
-    /"(https?:\/\/[^"]*mp4[^"]*(?:hd|hq|1080|720)[^"]*)"/i
-  );
-  const low = pick(
-    /setVideoUrlLow\(['"]([^'"]+)['"]\)/,
-    /html5player\.setVideoUrlLow\(['"]([^'"]+)['"]\)/
-  );
-  const mp4 = pick(
-    /"(https?:\/\/[^"]+\.mp4[^"]*)"/,
-    /'(https?:\/\/[^']+\.mp4[^']*)'/
-  );
-  const og = pick(
-    /property="og:video(?::url)?"\s+content="([^"]+)"/i,
-    /content="([^"]+)"\s+property="og:video(?::url)?"/i
-  );
+function expirySeconds(url) {
+  if (!url) return undefined;
+  const m = /[?&,]secure=[^,&]+,(\d{9,12})/.exec(url) || /[?&]e=(\d{9,12})/.exec(url);
+  if (!m) return undefined;
+  const exp = Number(m[1]);
+  if (!exp) return undefined;
+  const now = Math.floor(Date.now() / 1000);
+  const ts = exp > 1e12 ? Math.floor(exp / 1000) : exp;
+  const left = ts - now;
+  if (left < 30) return 30;
+  if (left > 86400) return 3600;
+  return left;
+}
 
-  return { hls, high, low, mp4, og };
+// ---- account / login ------------------------------------------------------
+
+function hasCredentials() {
+  const email = String(kino.config.get("email") || "").trim();
+  const password = String(kino.config.get("password") || "");
+  return !!(email && password);
+}
+
+/** True if the HTML looks like a logged-in account page (not the login form). */
+function pageLooksLoggedIn(html) {
+  if (!html) return false;
+  if (/id="signin-form"/i.test(html) && /signin-form\[password\]/i.test(html)) {
+    // login form present — not logged in (unless both)
+    if (!/sign.?out|log.?out|cerrar sesión|my account|mi cuenta|account\/logout/i.test(html)) {
+      return false;
+    }
+  }
+  return /account\/logout|sign.?out|log.?out|data-user-id|my-favourites|\/favorite\//i.test(html);
+}
+
+async function isLoggedIn() {
+  try {
+    const r = await fetchPage("/account");
+    if (!r.ok) return false;
+    return pageLooksLoggedIn(r.text());
+  } catch (e) {
+    log("isLoggedIn", e.message || e);
+    return false;
+  }
+}
+
+async function doLogin() {
+  const email = String(kino.config.get("email") || "").trim();
+  const password = String(kino.config.get("password") || "");
+  if (!email || !password) {
+    return { ok: false, message: "Escribe correo y contraseña" };
+  }
+
+  // Load login page for CSRF
+  let loginHtml;
+  try {
+    const r = await fetchPage("/account");
+    if (!r.ok) return { ok: false, message: "No se pudo abrir la página de cuenta" };
+    loginHtml = r.text();
+  } catch (e) {
+    return { ok: false, message: "Error de red al abrir cuenta" };
+  }
+
+  // Already logged in
+  if (pageLooksLoggedIn(loginHtml) && !/id="signin-form"/i.test(loginHtml)) {
+    return { ok: true, message: "Ya había sesión iniciada" };
+  }
+
+  const csrfM =
+    /name="signin-form\[csrf_token\]"[^>]*value="([^"]+)"/i.exec(loginHtml) ||
+    /value="([^"]+)"[^>]*name="signin-form\[csrf_token\]"/i.exec(loginHtml);
+  if (!csrfM) {
+    return { ok: false, message: "No se encontró el token de acceso" };
+  }
+
+  const form = {
+    "signin-form[csrf_token]": csrfM[1],
+    "signin-form[votes]": "",
+    "signin-form[subs]": "",
+    "signin-form[post_referer]": "",
+    "signin-form[login]": email,
+    "signin-form[password]": password,
+    "signin-form[rememberme]": "on",
+  };
+
+  try {
+    const r = await kino.fetch(BASE + "/account", {
+      method: "POST",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+        Accept: "text/html,application/xhtml+xml",
+        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+        Referer: BASE + "/account",
+        Origin: BASE,
+      },
+      body: { form },
+      cookies: true,
+      timeoutMs: 20000,
+    });
+    const body = r.text();
+    // Success: redirect away from pure login form, or page shows account UI
+    if (pageLooksLoggedIn(body) || (r.ok && !/signin-form\[password\]/i.test(body))) {
+      // Double-check with a fresh /account
+      if (await isLoggedIn()) {
+        return { ok: true, message: "Sesión iniciada" };
+      }
+    }
+    if (/invalid|incorrect|wrong password|error/i.test(body) && /signin-form/i.test(body)) {
+      return { ok: false, message: "Usuario o contraseña incorrectos" };
+    }
+    // One more check
+    if (await isLoggedIn()) return { ok: true, message: "Sesión iniciada" };
+    return { ok: false, message: "No se pudo iniciar sesión" };
+  } catch (e) {
+    log("doLogin", e.message || e);
+    return { ok: false, message: "Error al iniciar sesión" };
+  }
+}
+
+async function doLogout() {
+  try {
+    await fetchPage("/account/logout");
+  } catch (e) {
+    log("logout get", e.message || e);
+  }
+  try {
+    kino.cookies.clear();
+  } catch (e) {
+    log("cookies.clear", e.message || e);
+  }
+  return { message: "Sesión cerrada", clearSettings: [] };
+}
+
+/** Try several account list URLs and return cards if any look like video lists. */
+async function fetchAccountLists() {
+  const paths = [
+    "/account",
+    "/account/favorites",
+    "/account/favourites",
+    "/account/playlists",
+    "/my-favourites",
+  ];
+  const out = [];
+  const seenIds = new Set();
+
+  for (const path of paths) {
+    try {
+      const r = await fetchPage(path);
+      if (!r.ok) continue;
+      const html = r.text();
+      if (!pageLooksLoggedIn(html) && /signin-form\[password\]/i.test(html)) continue;
+      const cards = parseVideoCards(html);
+      if (!cards.length) continue;
+      // Derive a row title from path
+      let title = "Favoritos";
+      if (/playlist/i.test(path)) title = "Playlists";
+      else if (/favorite|favour/i.test(path)) title = "Favoritos";
+      else title = "Mi cuenta";
+      const fresh = cards.filter((c) => {
+        if (seenIds.has(c.id)) return false;
+        seenIds.add(c.id);
+        return true;
+      });
+      if (fresh.length) {
+        out.push({
+          id: "acc-" + path.replace(/\W+/g, "-"),
+          title,
+          items: fresh.slice(0, 36).map(toItem),
+          ref: path.replace(/^\//, ""),
+        });
+      }
+    } catch (e) {
+      log("account list", path, e.message || e);
+    }
+  }
+
+  // Also try profile favorites if we can find a profile link
+  try {
+    const r = await fetchPage("/account");
+    if (r.ok) {
+      const html = r.text();
+      const prof =
+        /href="(\/profiles\/[^"/]+)/i.exec(html) ||
+        /href="(\/[^"/]+\/favorites)/i.exec(html) ||
+        /href="(\/favorite\/\d+)/i.exec(html);
+      if (prof) {
+        const path = prof[1];
+        const r2 = await fetchPage(path);
+        if (r2.ok) {
+          const cards = parseVideoCards(r2.text()).filter((c) => !seenIds.has(c.id));
+          if (cards.length) {
+            out.push({
+              id: "acc-profile-fav",
+              title: "Favoritos",
+              items: cards.slice(0, 36).map(toItem),
+              ref: path.replace(/^\//, ""),
+            });
+          }
+        }
+      }
+    }
+  } catch (e) {
+    log("profile fav", e.message || e);
+  }
+
+  return out;
+}
+
+// Settings UI hooks (apiVersion 6)
+export async function settingsStatus() {
+  const email = String(kino.config.get("email") || "").trim();
+  if (!email) return { status: "Sin cuenta configurada" };
+  try {
+    const ok = await isLoggedIn();
+    return { status: ok ? "Sesión activa (" + email + ")" : "Sin sesión — pulsa Iniciar sesión" };
+  } catch {
+    return { status: "No se pudo comprobar la sesión" };
+  }
+}
+
+export async function action(key) {
+  if (key === "login") {
+    const res = await doLogin();
+    return { message: res.message };
+  }
+  if (key === "logout") {
+    return await doLogout();
+  }
+  return null;
 }
 
 // ---- search ---------------------------------------------------------------
@@ -264,7 +483,9 @@ export async function search(query) {
 
   let html;
   try {
-    html = await fetchPage(buildSearchPath(q, page, params));
+    const r = await fetchPage(buildSearchPath(q, page, params));
+    if (!r.ok) throw new Error("xvideos respondió " + r.status);
+    html = r.text();
   } catch (e) {
     log("search failed", e.message);
     throw kino.error("unavailable", e.message);
@@ -295,29 +516,39 @@ export async function search(query) {
 
 export async function home() {
   const rows = [];
-  // Main feeds + popular categories/tags (xvideos /c/Name-N and /tags/slug)
+
+  // Priority sections requested by user
   const sections = [
-    { id: "fresh", title: "Recién subidos", path: "/" },
-    { id: "best-week", title: "Mejores de la semana", path: "/best/week" },
-    { id: "best-month", title: "Mejores del mes", path: "/best/month" },
-    { id: "hits", title: "Más vistos", path: "/hits" },
-    { id: "amateur", title: "Amateur", path: "/c/Amateur-65" },
-    { id: "anal", title: "Anal", path: "/c/Anal-12" },
-    { id: "blowjob", title: "Blowjob", path: "/c/Blowjob-15" },
+    { id: "fresh", title: "Recientes", path: "/" },
+    { id: "asian", title: "Asian", path: "/c/Asian_Woman-32" },
     { id: "big-tits", title: "Big Tits", path: "/c/Big_Tits-23" },
     { id: "big-ass", title: "Big Ass", path: "/c/Big_Ass-24" },
-    { id: "teen", title: "Teen", path: "/c/Teen_18_-13" },
     { id: "latina", title: "Latina", path: "/c/Latina-16" },
-    { id: "lesbian", title: "Lesbian", path: "/c/Lesbian-26" },
     { id: "milf", title: "MILF", path: "/c/Milf-19" },
-    { id: "asian", title: "Asian", path: "/c/Asian_Woman-32" },
-    { id: "hardcore", title: "Hardcore", path: "/c/Hardcore-10" },
   ];
+
+  // Favorites / playlists first if logged in
+  if (hasCredentials()) {
+    try {
+      let logged = await isLoggedIn();
+      if (!logged) {
+        const res = await doLogin();
+        logged = res.ok;
+      }
+      if (logged) {
+        const accRows = await fetchAccountLists();
+        for (const row of accRows) rows.push(row);
+      }
+    } catch (e) {
+      log("home account", e.message || e);
+    }
+  }
 
   for (const sec of sections) {
     try {
-      const html = await fetchPage(sec.path);
-      const cards = parseVideoCards(html).slice(0, 36);
+      const r = await fetchPage(sec.path);
+      if (!r.ok) continue;
+      const cards = parseVideoCards(r.text()).slice(0, 36);
       if (cards.length) {
         rows.push({
           id: sec.id,
@@ -327,7 +558,7 @@ export async function home() {
         });
       }
     } catch (e) {
-      log("home", sec.id, e.message);
+      log("home", sec.id, e.message || e);
     }
   }
 
@@ -342,9 +573,7 @@ export async function browse(ref, cursor) {
   if (path === "/fresh") path = "/";
 
   if (page > 0) {
-    // Categories use /c/Name-N/N for pages sometimes; search uses ?p=
     if (path.startsWith("/c/") || path.startsWith("/tags/") || path.startsWith("/best")) {
-      // xvideos category pagination: /c/Amateur-65/2
       if (!/\/\d+$/.test(path)) path = path + "/" + (page + 1);
       else path = path.replace(/\/\d+$/, "/" + (page + 1));
     } else {
@@ -354,7 +583,9 @@ export async function browse(ref, cursor) {
 
   let html;
   try {
-    html = await fetchPage(path);
+    const r = await fetchPage(path);
+    if (!r.ok) throw new Error("xvideos respondió " + r.status);
+    html = r.text();
   } catch (e) {
     log("browse failed", e.message);
     throw kino.error("unavailable", e.message);
@@ -369,14 +600,11 @@ export async function browse(ref, cursor) {
 // ---- resolve --------------------------------------------------------------
 
 export async function resolve(ref) {
-  // Never throw before first await (engine rule on older Kino)
   await Promise.resolve();
 
   const id = extractId(ref);
   if (!id) throw kino.error("not_found", "ref vacío");
 
-  // xvideos returns 404 for /video.<id>/ without a path segment.
-  // Any non-empty slug works (/x, /watch, real slug, etc.).
   const candidates = [
     BASE + "/video." + id + "/x",
     BASE + "/video." + id + "/watch",
@@ -396,16 +624,15 @@ export async function resolve(ref) {
           Accept: "text/html",
           Referer: BASE + "/",
         },
+        cookies: true,
         timeoutMs: 15000,
       });
-      if (!r.ok) {
-        log("resolve status", r.status, url);
-        continue;
-      }
+      if (!r.ok) continue;
       const body = r.text();
-      // Skip soft-404 pages
-      if (/not found|página no encontrada|video not found/i.test(body) && !/setVideoHLS|setVideoUrlHigh/i.test(body)) {
-        log("resolve soft-404", url);
+      if (
+        /not found|página no encontrada|video not found/i.test(body) &&
+        !/setVideoHLS|setVideoUrlHigh/i.test(body)
+      ) {
         continue;
       }
       html = body;
@@ -416,53 +643,58 @@ export async function resolve(ref) {
     }
   }
 
-  if (!html) {
-    throw kino.error("not_found", "vídeo no encontrado");
-  }
+  if (!html) throw kino.error("not_found", "vídeo no encontrado");
 
   const streams = extractStreams(html);
+  const mp4Url = streams.high || streams.low || streams.mp4 || null;
+  const hlsUrl = streams.hls || null;
   const pref = preferredQuality();
-
-  let streamUrl = null;
-  let label = "Directo";
-
-  if (pref === "hls") {
-    streamUrl = streams.hls || streams.high || streams.og || streams.mp4 || streams.low;
-    label = streams.hls ? "HLS" : "Respaldo";
-  } else if (pref === "low") {
-    streamUrl = streams.low || streams.high || streams.hls || streams.og || streams.mp4;
-    label = streams.low ? "Baja" : "Respaldo";
-  } else {
-    streamUrl = streams.hls || streams.high || streams.og || streams.mp4 || streams.low;
-    label = streams.hls ? "HLS" : streams.high ? "Alta" : "Directo";
-  }
-
-  if (!streamUrl) {
-    log("no stream in page for", id);
-    throw kino.error("unavailable", "no se encontró el stream");
-  }
 
   const headers = {
     Referer: finalUrl || BASE + "/",
     "User-Agent":
       "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+    Origin: BASE,
   };
+
+  let streamUrl = null;
+  let label = "Directo";
+
+  if (pref === "hls") {
+    streamUrl = hlsUrl || mp4Url || streams.og;
+    label = hlsUrl ? "HLS" : "MP4";
+  } else if (pref === "low") {
+    streamUrl = streams.low || mp4Url || hlsUrl || streams.og;
+    label = streams.low || mp4Url ? "MP4" : "HLS";
+  } else {
+    streamUrl = mp4Url || hlsUrl || streams.og;
+    label = mp4Url ? "MP4" : hlsUrl ? "HLS" : "Directo";
+  }
+
+  if (!streamUrl) throw kino.error("unavailable", "no se encontró el stream");
 
   const isHls = /\.m3u8(\?|$)/i.test(streamUrl);
   const alternatives = [];
   const addAlt = (url, altLabel) => {
-    if (url && url !== streamUrl) alternatives.push({ url, label: altLabel, headers });
+    if (url && url !== streamUrl) {
+      alternatives.push({
+        url,
+        label: altLabel,
+        headers,
+        mime: /\.m3u8(\?|$)/i.test(url) ? "application/x-mpegURL" : "video/mp4",
+      });
+    }
   };
-  if (pref !== "hls") addAlt(streams.hls, "HLS");
-  if (pref !== "high") addAlt(streams.high, "Alta");
-  if (pref !== "low") addAlt(streams.low, "Baja");
-  addAlt(streams.mp4, "MP4");
+  if (!isHls && hlsUrl) addAlt(hlsUrl, "HLS");
+  if (isHls && mp4Url) addAlt(mp4Url, "MP4");
+  if (streams.low && streams.low !== streamUrl) addAlt(streams.low, "Baja");
 
   return {
     url: streamUrl,
     mime: isHls ? "application/x-mpegURL" : "video/mp4",
     headers,
     label,
+    expiresInSeconds: expirySeconds(streamUrl),
     alternatives: alternatives.length ? alternatives : undefined,
   };
 }

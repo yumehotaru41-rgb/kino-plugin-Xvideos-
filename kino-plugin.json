@@ -1,12 +1,12 @@
 {
   "id": "xvideos",
   "name": "XVideos",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "apiVersion": 6,
   "entry": "plugin.js",
-  "description": "Videos adultos de xvideos.com. Solo +18. Búsqueda, Home con categorías y descargas.",
+  "description": "Videos adultos de xvideos.com. Solo +18. Cuenta opcional para favoritos y playlists.",
   "author": "community",
-  "homepage": "https://github.com/example/kino-plugin-xvideos",
+  "homepage": "https://github.com/yumehotaru41-rgb/kino-plugin-Xvideos-",
   "icon": "icon.png",
   "hosts": [
     "www.xvideos.com",
@@ -25,32 +25,59 @@
     "search",
     "home",
     "browse",
-    "resolve",
-    "download"
+    "resolve"
   ],
   "color": "#C8102E",
-  "categories": [
-    "adult"
-  ],
+  "categories": ["adult"],
   "settings": [
+    {
+      "key": "account",
+      "label": "Cuenta (opcional)",
+      "type": "section",
+      "hint": "Para ver favoritos y playlists en el Inicio"
+    },
+    {
+      "key": "email",
+      "label": "Correo o usuario",
+      "type": "text",
+      "hint": "El login de xvideos.com"
+    },
+    {
+      "key": "password",
+      "label": "Contraseña",
+      "type": "password"
+    },
+    {
+      "key": "status",
+      "label": "Estado",
+      "type": "status"
+    },
+    {
+      "key": "login",
+      "label": "Iniciar sesión",
+      "type": "action",
+      "confirm": "¿Conectar con tu cuenta de XVideos?"
+    },
+    {
+      "key": "logout",
+      "label": "Cerrar sesión",
+      "type": "action",
+      "confirm": "¿Cerrar la sesión y borrar cookies?"
+    },
+    {
+      "key": "playback",
+      "label": "Reproducción",
+      "type": "section"
+    },
     {
       "key": "quality",
       "label": "Calidad preferida",
       "type": "select",
       "default": "high",
       "options": [
-        {
-          "value": "high",
-          "label": "Alta (HD / HLS)"
-        },
-        {
-          "value": "low",
-          "label": "Baja (ahorro de datos)"
-        },
-        {
-          "value": "hls",
-          "label": "Solo HLS"
-        }
+        { "value": "high", "label": "Alta (MP4 / HLS)" },
+        { "value": "low", "label": "Baja (ahorro de datos)" },
+        { "value": "hls", "label": "Solo HLS" }
       ]
     },
     {
@@ -59,26 +86,11 @@
       "type": "select",
       "default": "relevance",
       "options": [
-        {
-          "value": "relevance",
-          "label": "Relevancia"
-        },
-        {
-          "value": "uploaddate",
-          "label": "Más recientes"
-        },
-        {
-          "value": "rating",
-          "label": "Mejor valorados"
-        },
-        {
-          "value": "views",
-          "label": "Más vistos"
-        },
-        {
-          "value": "length",
-          "label": "Más largos"
-        }
+        { "value": "relevance", "label": "Relevancia" },
+        { "value": "uploaddate", "label": "Más recientes" },
+        { "value": "rating", "label": "Mejor valorados" },
+        { "value": "views", "label": "Más vistos" },
+        { "value": "length", "label": "Más largos" }
       ]
     },
     {
@@ -87,30 +99,12 @@
       "type": "select",
       "default": "allduration",
       "options": [
-        {
-          "value": "allduration",
-          "label": "Cualquiera"
-        },
-        {
-          "value": "1-3min",
-          "label": "1–3 min"
-        },
-        {
-          "value": "3-10min",
-          "label": "3–10 min"
-        },
-        {
-          "value": "10min_more",
-          "label": "Más de 10 min"
-        },
-        {
-          "value": "10-20min",
-          "label": "10–20 min"
-        },
-        {
-          "value": "20min_more",
-          "label": "Más de 20 min"
-        }
+        { "value": "allduration", "label": "Cualquiera" },
+        { "value": "1-3min", "label": "1–3 min" },
+        { "value": "3-10min", "label": "3–10 min" },
+        { "value": "10min_more", "label": "Más de 10 min" },
+        { "value": "10-20min", "label": "10–20 min" },
+        { "value": "20min_more", "label": "Más de 20 min" }
       ]
     },
     {
